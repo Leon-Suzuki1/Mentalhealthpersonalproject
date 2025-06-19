@@ -1,19 +1,106 @@
 import json
-import datetime
+from datetime import datetime, date, timedelta
+# Assuming auth.py is in the same directory
+from auth import sign_up, log_in
 
-def load_data(filepath="data.json"):
-  """Loads data from a JSON file.
+DATA_FILE_TEMPLATE = "data_{}.json"
+
+def get_email_prefix(email):
+  """Extracts the part of an email before the '@' symbol."""
+  if not isinstance(email, str) or '@' not in email:
+    # Return a default or raise an error if email format is unexpected
+    # For now, returning a placeholder to avoid crashes if an invalid email is passed
+    print(f"Warning: Invalid email format provided: {email}. Using 'unknown_user' as prefix.")
+    return "unknown_user"
+  return email.split('@')[0]
+
+def calculate_streak(user_email_prefix):
+  """Calculates the current streak of consecutive days with entries."""
+  entries = load_data(user_email_prefix)
+  if not entries:
+    return 0
+
+  # Sort entries by timestamp in descending order (most recent first)
+  try:
+    entries.sort(key=lambda x: x['timestamp'], reverse=True)
+  except (TypeError, KeyError) as e:
+    print(f"Error sorting entries: {e}. Ensure all entries have a valid 'timestamp'.")
+    return 0 # Cannot calculate streak if timestamps are unreliable
+
+  today = date.today()
+  streak = 0
+
+  # Check the most recent entry first
+  try:
+    most_recent_entry_ts_str = entries[0]['timestamp']
+    most_recent_entry_date = datetime.fromisoformat(most_recent_entry_ts_str).date()
+  except (ValueError, KeyError, IndexError) as e:
+    print(f"Error processing most recent entry's timestamp: {e}")
+    return 0 # Cannot determine streak if the latest entry is problematic
+
+  if most_recent_entry_date == today or most_recent_entry_date == today - timedelta(days=1):
+    streak = 1
+  else:
+    # If the most recent entry is older than yesterday, there's no current streak
+    return 0
+
+  if len(entries) > 1:
+    last_streak_date = most_recent_entry_date
+    for entry in entries[1:]:
+      try:
+        current_entry_ts_str = entry['timestamp']
+        current_entry_date = datetime.fromisoformat(current_entry_ts_str).date()
+      except (ValueError, KeyError) as e:
+        print(f"Warning: Skipping entry with problematic timestamp during streak calculation: {e}")
+        continue # Skip this entry and try to continue the streak with others
+
+      expected_date = last_streak_date - timedelta(days=1)
+      if current_entry_date == expected_date:
+        streak += 1
+        last_streak_date = current_entry_date
+      elif current_entry_date < expected_date:
+        # Gap in days, streak is broken
+        break
+      # If current_entry_date == last_streak_date, it's an entry from the same day, continue
+      # If current_entry_date > expected_date (and not same day), implies unsorted or future data, break
+      elif current_entry_date > expected_date and current_entry_date != last_streak_date:
+          print(f"Warning: Encountered an out-of-order or future-dated entry ({current_entry_date}) after {last_streak_date}. Streak calculation might be affected.")
+          break
+
+  return streak
+
+def provide_proactive_support(user_details, new_entry_happiness):
+  """Provides proactive support messages based on happiness level."""
+  HAPPINESS_THRESHOLD = 4
+  if new_entry_happiness < HAPPINESS_THRESHOLD:
+    print("\n--- Gentle Reminder ---")
+    print("It's understandable to have tough days. Remember to be gentle with yourself. Small acts of self-care can make a difference.")
+
+    coping_mechanisms = user_details.get("coping_mechanisms", "") # Default to empty string
+    if coping_mechanisms: # Now just check if it's a non-empty string (None is handled by default)
+      print(f"You mentioned that the following helps you feel better or calm down: {coping_mechanisms}")
+    else:
+      print("Consider engaging in an activity you usually find relaxing or enjoyable.")
+    print("-----------------------\n")
+
+def load_data(user_email_prefix):
+  """Loads data from a user-specific JSON file.
 
   Args:
-    filepath: The path to the JSON file (defaults to "data.json").
+    user_email_prefix: The prefix derived from the user's email to identify their data file.
 
   Returns:
     A list of entries if the file exists and contains valid JSON,
     otherwise an empty list.
   """
+  filepath = DATA_FILE_TEMPLATE.format(user_email_prefix)
   try:
     with open(filepath, "r") as f:
       data = json.load(f)
+      # Ensure data is a list, as expected by downstream functions
+      if not isinstance(data, list):
+          print(f"Warning: Data in {filepath} is not a list. Returning empty list.")
+          return []
       return data
   except FileNotFoundError:
     return []
@@ -22,30 +109,42 @@ def load_data(filepath="data.json"):
     print(f"Warning: Could not decode JSON from {filepath}. Starting with an empty list.")
     return []
 
-def save_data(data, filepath="data.json"):
-  """Saves data to a JSON file.
+def save_data(data, user_email_prefix):
+  """Saves data to a user-specific JSON file.
 
   Args:
     data: The data to save (expected to be a list of entries).
-    filepath: The path to the JSON file (defaults to "data.json").
+    user_email_prefix: The prefix derived from the user's email to identify their data file.
   """
-  with open(filepath, "w") as f:
-    json.dump(data, f, indent=4)
+  filepath = DATA_FILE_TEMPLATE.format(user_email_prefix)
+  try:
+    with open(filepath, "w") as f:
+      json.dump(data, f, indent=4)
+  except IOError as e:
+    print(f"Error: Could not save entry data to {filepath}. {e}")
 
-def view_entries():
-  """Displays past entries."""
-  entries = load_data()
+def view_entries(user_email_prefix): # Needs user_email_prefix to load correct data
+  """Displays past entries for a specific user."""
+  entries = load_data(user_email_prefix)
   if not entries:
     print("No entries found.")
     return
 
+  # Sort entries by timestamp in ascending order for viewing
+  try:
+    entries.sort(key=lambda x: x['timestamp'])
+  except (TypeError, KeyError) as e:
+    print(f"Warning: Could not sort entries for viewing due to: {e}. Displaying in current order.")
+
   for entry in entries:
     # Format timestamp for better readability
     try:
-      timestamp_obj = datetime.datetime.fromisoformat(entry['timestamp'])
+      # Using datetime.fromisoformat correctly
+      timestamp_obj = datetime.fromisoformat(entry['timestamp'])
       formatted_timestamp = timestamp_obj.strftime('%Y-%m-%d %H:%M:%S')
-    except (ValueError, TypeError): # Handle cases where timestamp might be malformed or not a string
+    except (ValueError, TypeError, KeyError) as e: # Handle cases where timestamp might be malformed, not a string or missing
         formatted_timestamp = entry.get('timestamp', 'N/A')
+        print(f"Warning: Could not parse timestamp '{entry.get('timestamp')}' for an entry: {e}")
 
     print(f"Timestamp: {formatted_timestamp}")
     print(f"  Highlight: {entry.get('highlight', 'N/A')}")
@@ -56,44 +155,87 @@ def view_entries():
 
 def main():
   """Main function for the application."""
+  current_user = None
+  user_email_prefix = None # Will be set after login/signup
+
   while True:
-    choice = input("Do you want to (a)dd a new entry or (v)iew past entries? (a/v): ").lower()
-    if choice == 'a':
-      entries = load_data()
-      timestamp = datetime.datetime.now().isoformat()
-
-      highlight = input("What was the highlight of your day? ")
-      lowlight = input("What was the lowlight of your day? ")
-
-      while True:
-        try:
-          happiness_level = int(input("What is your happiness level (1-10)? "))
-          if 1 <= happiness_level <= 10:
-            break
-          else:
-            print("Invalid input. Happiness level must be between 1 and 10.")
-        except ValueError:
-          print("Invalid input. Please enter a number.")
-
-      major_event = input("Did anything major happen today? ")
-
-      new_entry = {
-        "timestamp": timestamp,
-        "highlight": highlight,
-        "lowlight": lowlight,
-        "happiness": happiness_level,
-        "major_event": major_event,
-      }
-
-      entries.append(new_entry)
-      save_data(entries)
-      print("Entry saved successfully!")
-      break # Exit after adding an entry
-    elif choice == 'v':
-      view_entries()
-      break # Exit after viewing entries
+    if current_user is None:
+      # Logged-out state
+      choice = input("Choose action: (S)ign up, (L)og in, (Q)uit: ").lower()
+      if choice == 's':
+        user = sign_up() # This function from auth.py now handles onboarding
+        if user:
+          current_user = user
+          user_email_prefix = get_email_prefix(current_user['email'])
+          # Calculate streak - for a new user, it's likely 0 unless they had prior data
+          # (auth.py prevents re-signup, so this is mostly for the first time)
+          streak = calculate_streak(user_email_prefix)
+          print(f"\nWelcome, {current_user['email']}!")
+          print(f"It's great to have you on board. Your current streak is: {streak} days.")
+          # Onboarding questions are now part of sign_up() in auth.py
+      elif choice == 'l':
+        user = log_in()
+        if user:
+          current_user = user
+          user_email_prefix = get_email_prefix(current_user['email'])
+          streak = calculate_streak(user_email_prefix)
+          print(f"\nWelcome back, {current_user['email']}! Your current streak: {streak} days.")
+      elif choice == 'q':
+        print("Goodbye!")
+        break
+      else:
+        print("Invalid choice. Please try again.")
     else:
-      print("Invalid choice. Please enter 'a' or 'v'.")
+      # Logged-in state
+      # user_email_prefix should already be set from login/signup
+      action = input(f"\nLogged in as {current_user['email']}. Choose action: (A)dd entry, (V)iew entries, (L)og out: ").lower()
+      if action == 'a':
+        highlight = input("What was the highlight of your day? ")
+        lowlight = input("What was the lowlight of your day? ")
+
+        happiness_level = -1
+        while True:
+          try:
+            happiness_str = input("What is your happiness level (1-10)? ")
+            happiness_level = int(happiness_str)
+            if 1 <= happiness_level <= 10:
+              break
+            else:
+              print("Please enter a number between 1 and 10.")
+          except ValueError:
+            print("Invalid input. Please enter a number.")
+
+        major_event = input("Did anything major happen today? ")
+        timestamp = datetime.now().isoformat()
+
+        new_entry = {
+          "timestamp": timestamp,
+          "highlight": highlight,
+          "lowlight": lowlight,
+          "happiness": happiness_level,
+          "major_event": major_event
+        }
+
+        entries = load_data(user_email_prefix)
+        entries.append(new_entry)
+        save_data(entries, user_email_prefix)
+        print("Entry saved successfully!")
+
+        provide_proactive_support(current_user, happiness_level) # Pass the full current_user dict
+
+        current_streak = calculate_streak(user_email_prefix)
+        print(f"Your updated streak: {current_streak} days.")
+
+      elif action == 'v':
+        view_entries(user_email_prefix)
+      elif action == 'l':
+        print(f"Logging out {current_user['email']}.")
+        current_user = None
+        user_email_prefix = None # Reset prefix
+      else:
+        print("Invalid choice. Please try again.")
 
 if __name__ == "__main__":
+  # --- Cleared placeholder user data and test calls ---
+  # The main function now handles the application flow.
   main()
