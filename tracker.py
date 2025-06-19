@@ -226,6 +226,31 @@ def main():
         current_streak = calculate_streak(user_email_prefix)
         print(f"Your updated streak: {current_streak} days.")
 
+        # --- Distress Condition Check ---
+        all_user_entries = load_data(user_email_prefix)
+        # Sort entries by timestamp (newest first), safely
+        all_user_entries.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+        distress_condition_met = False
+        if len(all_user_entries) >= 5:
+          recent_five_entries = all_user_entries[:5]
+          low_happiness_count = 0
+          for entry in recent_five_entries:
+            happiness = entry.get('happiness')
+            # Check if happiness is explicitly 1 or 2
+            if happiness == 1 or happiness == 2:
+              low_happiness_count += 1
+
+          if low_happiness_count == 5:
+            distress_condition_met = True
+
+        # Check the flag and print the message if the condition is met
+        if distress_condition_met:
+          print("\nWe've noticed you may be going through a difficult time. Please remember that it's okay to seek support.")
+          print("Talking to a trusted friend, family member, teacher, or a professional counselor can often make a big difference.")
+          print("You don't have to go through this alone.\n")
+        # --- End Distress Condition Check & Message ---
+
       elif action == 'v':
         view_entries(user_email_prefix)
       elif action == 'l':
